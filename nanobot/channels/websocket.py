@@ -440,6 +440,7 @@ class _WebSocketProfileRuntime:
         self.bus = MessageBus()
         self.provider = None
         self.agent: AgentLoop | None = None
+        self.cron: "CronService | None" = None
         self._tasks: list[asyncio.Task] = []
         self._prepared_config: Config | None = None
         self._running = False
@@ -510,6 +511,7 @@ class _WebSocketProfileRuntime:
             disabled_skills=defaults.disabled_skills,
             session_ttl_minutes=defaults.session_ttl_minutes,
             tools_config=cfg.tools,
+            cron_service=self.cron,
         )
 
     def _write_composio_tool_router_notes(self) -> None:
@@ -535,6 +537,10 @@ class _WebSocketProfileRuntime:
         self._write_composio_tool_router_notes()
         self._prepared_config = await self._profile_config()
         self.provider = self._make_provider(self._prepared_config)
+        from nanobot.cron.service import CronService as _CronService
+        cron_store = self.workspace / "cron" / "jobs.json"
+        self.cron = _CronService(cron_store)
+        await self.cron.start()
         self.agent = self._make_agent(self._prepared_config)
         await self.agent._connect_mcp()
         self._tasks = [
@@ -570,6 +576,8 @@ class _WebSocketProfileRuntime:
         if self.agent is not None:
             await self.agent.close_mcp()
             self.agent.stop()
+        if self.cron is not None:
+            self.cron.stop()
         self.sessions.flush_all()
 
 
@@ -817,6 +825,24 @@ class WebSocketChannel(BaseChannel):
         m = re.match(r"^/api/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$", got)
         if m:
             return self._handle_media_fetch(m.group(1), m.group(2))
+
+        # Dashboard API endpoints.
+        if got == "/api/memory":
+            return self._handle_memory(request)
+
+        if got == "/api/system-prompt":
+            return self._handle_system_prompt(request)
+
+        if got == "/api/cron/jobs":
+            return self._handle_cron_jobs(request)
+
+        m = re.match(r"^/api/cron/jobs/([A-Za-z0-9_-]+)/toggle$", got)
+        if m:
+            return self._handle_cron_toggle(request, m.group(1))
+
+        m = re.match(r"^/api/cron/jobs/([A-Za-z0-9_-]+)/run$", got)
+        if m:
+            return await self._handle_cron_run(request, m.group(1))
 
         # 4. WebSocket upgrade (the channel's primary purpose). Only run the
         # handshake gate on requests that actually ask to upgrade; otherwise
@@ -1099,6 +1125,121 @@ class WebSocketChannel(BaseChannel):
             return _http_error(404, "session not found")
         deleted = session_manager.delete_session(decoded_key)
         return _http_json_response({"deleted": bool(deleted)})
+
+    # -- Dashboard API handlers ------------------------------------------------
+
+    def _handle_memory(self, request: WsRequest) -> Response:
+        """GET /api/memory — return the three memory files from the workspace."""
+        profile_id = self._api_profile_id(request)
+        if profile_id is None:
+            return _http_error(401, "Unauthorized")
+        runtime = self._profile_runtimes.get(profile_id or "")
+        workspace = runtime.workspace if runtime else None
+        if workspace is None:
+            return _http_error(503, "workspace unavailable")
+        files: dict[str, str] = {}
+        for name, rel in [
+            ("soul", "SOUL.md"),
+            ("user", "USER.md"),
+            ("memory", "memory/MEMORY.md"),
+        ]:
+            p = workspace / rel
+            files[name] = p.read_text(encoding="utf-8") if p.exists() else ""
+        return _http_json_response({"files": files})
+
+    def _handle_system_prompt(self, request: WsRequest) -> Response:
+        """GET /api/system-prompt — return the fully-built system prompt."""
+        profile_id = self._api_profile_id(request)
+        if profile_id is None:
+            return _http_error(401, "Unauthorized")
+        runtime = self._profile_runtimes.get(profile_id or "")
+        if runtime is None or runtime.agent is None:
+            return _http_error(503, "agent not available")
+        try:
+            prompt = runtime.agent.context.build_system_prompt()
+        except Exception as exc:
+            logger.warning("system-prompt endpoint failed: {}", exc)
+            return _http_error(500, "failed to build system prompt")
+        return _http_json_response({"prompt": prompt})
+
+    def _handle_cron_jobs(self, request: WsRequest) -> Response:
+        """GET /api/cron/jobs — list all cron jobs for the profile."""
+        profile_id = self._api_profile_id(request)
+        if profile_id is None:
+            return _http_error(401, "Unauthorized")
+        runtime = self._profile_runtimes.get(profile_id or "")
+        if runtime is None:
+            return _http_error(503, "profile runtime unavailable")
+        if runtime.cron is None:
+            return _http_json_response({"jobs": []})
+        jobs = runtime.cron.list_jobs(include_disabled=True)
+        jobs_out = []
+        for job in jobs:
+            jobs_out.append({
+                "id": job.id,
+                "name": job.name,
+                "enabled": job.enabled,
+                "schedule": {
+                    "kind": job.schedule.kind,
+                    "expr": job.schedule.expr,
+                    "everyMs": job.schedule.every_ms,
+                    "atMs": job.schedule.at_ms,
+                    "tz": job.schedule.tz,
+                },
+                "payload": {
+                    "message": job.payload.message,
+                    "deliver": job.payload.deliver,
+                    "channel": job.payload.channel,
+                },
+                "state": {
+                    "nextRunAtMs": job.state.next_run_at_ms,
+                    "lastRunAtMs": job.state.last_run_at_ms,
+                    "lastStatus": job.state.last_status,
+                    "lastError": job.state.last_error,
+                    "runHistory": [
+                        {
+                            "runAtMs": r.run_at_ms,
+                            "status": r.status,
+                            "durationMs": r.duration_ms,
+                            "error": r.error,
+                        }
+                        for r in job.state.run_history
+                    ],
+                },
+                "createdAtMs": job.created_at_ms,
+                "updatedAtMs": job.updated_at_ms,
+            })
+        return _http_json_response({"jobs": jobs_out})
+
+    def _handle_cron_toggle(self, request: WsRequest, job_id: str) -> Response:
+        """GET /api/cron/jobs/<id>/toggle — flip a job's enabled state."""
+        profile_id = self._api_profile_id(request)
+        if profile_id is None:
+            return _http_error(401, "Unauthorized")
+        runtime = self._profile_runtimes.get(profile_id or "")
+        if runtime is None or runtime.cron is None:
+            return _http_error(503, "cron service unavailable")
+        job = runtime.cron.get_job(job_id)
+        if job is None:
+            return _http_error(404, "job not found")
+        updated = runtime.cron.enable_job(job_id, not job.enabled)
+        if updated is None:
+            return _http_error(404, "job not found")
+        return _http_json_response({"id": job_id, "enabled": updated.enabled})
+
+    async def _handle_cron_run(self, request: WsRequest, job_id: str) -> Response:
+        """GET /api/cron/jobs/<id>/run — trigger a job immediately."""
+        profile_id = self._api_profile_id(request)
+        if profile_id is None:
+            return _http_error(401, "Unauthorized")
+        runtime = self._profile_runtimes.get(profile_id or "")
+        if runtime is None or runtime.cron is None:
+            return _http_error(503, "cron service unavailable")
+        job = runtime.cron.get_job(job_id)
+        if job is None:
+            return _http_error(404, "job not found")
+        asyncio.create_task(runtime.cron.run_job(job_id, force=True))
+        return _http_json_response({"id": job_id, "status": "triggered"})
 
     def _serve_static(self, request_path: str) -> Response | None:
         """Resolve *request_path* against the built SPA directory; SPA fallback to index.html."""

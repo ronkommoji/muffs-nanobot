@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DeleteConfirm } from "@/components/DeleteConfirm";
+import { DashboardPanel } from "@/components/DashboardPanel";
 import { Sidebar } from "@/components/Sidebar";
 import { ThreadShell } from "@/components/thread/ThreadShell";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { preloadMarkdownText } from "@/components/MarkdownText";
 import { useSessions } from "@/hooks/useSessions";
 import { useTheme } from "@/hooks/useTheme";
+import { useClient } from "@/providers/ClientProvider";
 import { cn } from "@/lib/utils";
 import { deriveWsUrl, fetchBootstrap } from "@/lib/bootstrap";
 import { NanobotClient } from "@/lib/nanobot-client";
@@ -154,11 +156,13 @@ export default function App() {
 function Shell() {
   const { t, i18n } = useTranslation();
   const { theme, toggle } = useTheme();
+  const { token } = useClient();
   const { sessions, loading, refresh, createChat, deleteChat } = useSessions();
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [desktopSidebarOpen, setDesktopSidebarOpen] =
     useState<boolean>(readSidebarOpen);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<{
     key: string;
     label: string;
@@ -270,6 +274,7 @@ function Shell() {
     onRefresh: () => void refresh(),
     onRequestDelete: (key: string, label: string) =>
       setPendingDelete({ key, label }),
+    onDashboard: () => setDashboardOpen(true),
   };
 
   return (
@@ -316,6 +321,13 @@ function Shell() {
           hideSidebarToggleOnDesktop={desktopSidebarOpen}
         />
       </main>
+
+      <DashboardPanel
+        open={dashboardOpen}
+        onClose={() => setDashboardOpen(false)}
+        token={token}
+        activeSessionKey={activeKey}
+      />
 
       <DeleteConfirm
         open={!!pendingDelete}

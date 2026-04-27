@@ -1,4 +1,4 @@
-import { Moon, PanelLeftClose, Plus, RefreshCcw, Sun } from "lucide-react";
+import { LayoutDashboard, Moon, PanelLeftClose, Plus, RefreshCcw, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ChatList } from "@/components/ChatList";
@@ -19,6 +19,7 @@ interface SidebarProps {
   onRefresh: () => void;
   onRequestDelete: (key: string, label: string) => void;
   onCollapse: () => void;
+  onDashboard: () => void;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -35,19 +36,30 @@ export function Sidebar(props: SidebarProps) {
         >
           <PanelLeftClose className="h-3.5 w-3.5" />
         </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t("sidebar.toggleTheme")}
-          onClick={props.onToggleTheme}
-          className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-        >
-          {props.theme === "dark" ? (
-            <Sun className="h-3.5 w-3.5" />
-          ) : (
-            <Moon className="h-3.5 w-3.5" />
-          )}
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Open dashboard"
+            onClick={props.onDashboard}
+            className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          >
+            <LayoutDashboard className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t("sidebar.toggleTheme")}
+            onClick={props.onToggleTheme}
+            className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          >
+            {props.theme === "dark" ? (
+              <Sun className="h-3.5 w-3.5" />
+            ) : (
+              <Moon className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
       </div>
       <div className="px-2 pb-2.5">
         <Button
