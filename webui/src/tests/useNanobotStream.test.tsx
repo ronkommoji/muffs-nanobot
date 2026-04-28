@@ -113,4 +113,81 @@ describe("useNanobotStream", () => {
       { kind: "video", url: "/api/media/sig/payload", name: "demo.mp4" },
     ]);
   });
+
+  it("reconciles a complete message that echoes a finished stream", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-s", []), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      fake.emit("chat-s", {
+        event: "delta",
+        chat_id: "chat-s",
+        text: "Hello",
+        stream_id: "s1",
+      });
+      fake.emit("chat-s", {
+        event: "delta",
+        chat_id: "chat-s",
+        text: " world",
+        stream_id: "s1",
+      });
+      fake.emit("chat-s", {
+        event: "stream_end",
+        chat_id: "chat-s",
+        stream_id: "s1",
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      role: "assistant",
+      content: "Hello world",
+      isStreaming: false,
+    });
+
+    const streamedId = result.current.messages[0].id;
+    act(() => {
+      fake.emit("chat-s", {
+        event: "message",
+        chat_id: "chat-s",
+        text: "Hello world",
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0].id).toBe(streamedId);
+    expect(result.current.messages[0].content).toBe("Hello world");
+  });
+
+  it("keeps a complete message when it differs from the finished stream", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-d", []), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      fake.emit("chat-d", {
+        event: "delta",
+        chat_id: "chat-d",
+        text: "Draft",
+      });
+      fake.emit("chat-d", {
+        event: "stream_end",
+        chat_id: "chat-d",
+      });
+      fake.emit("chat-d", {
+        event: "message",
+        chat_id: "chat-d",
+        text: "Final",
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages.map((m) => m.content)).toEqual([
+      "Draft",
+      "Final",
+    ]);
+  });
 });

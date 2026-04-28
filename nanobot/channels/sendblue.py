@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -116,6 +117,14 @@ def _replace_marked_section(existing: str, section: str) -> str:
         _, after = rest.split(_MUFFS_END, 1)
         return f"{before.rstrip()}\n\n{block}\n{after.lstrip()}".rstrip() + "\n"
     return f"{existing.rstrip()}\n\n{block}\n" if existing.strip() else f"{block}\n"
+
+
+def _remove_marked_section(existing: str, *, start: str = _MUFFS_START, end: str = _MUFFS_END) -> str:
+    if start not in existing or end not in existing:
+        return existing
+    before, rest = existing.split(start, 1)
+    _, after = rest.split(end, 1)
+    return f"{before.rstrip()}\n\n{after.lstrip()}".rstrip() + "\n"
 
 
 def _replace_named_marked_section(existing: str, section: str, *, start: str, end: str) -> str:
@@ -360,16 +369,72 @@ class _SendblueOnboarding:
 
     def _write_soul(self, state: dict[str, Any]) -> None:
         assistant_name = state.get("assistant_name") or "Muffs"
-        section = f"""# Muffs Personality
-
-- Assistant display name: {assistant_name}
-- Default identity: a personal, fun assistant inspired by Muffs, the user's cat.
-- Be warm, practical, direct, and a little playful without being long-winded.
-- Help the user plan their day, remember commitments, answer questions, research useful information, and connect tools when asked.
-- When the user asks to connect Gmail, Calendar, Notion, GitHub, or another app, use Composio connection tools to generate an auth link."""
         path = self.runtime.workspace / "SOUL.md"
         existing = path.read_text(encoding="utf-8") if path.exists() else ""
-        path.write_text(_replace_marked_section(existing, section), encoding="utf-8")
+        path.write_text(self._render_soul(existing, assistant_name), encoding="utf-8")
+
+    def _render_soul(self, existing: str, assistant_name: str) -> str:
+        """Update SOUL.md in place instead of appending onboarding metadata."""
+        text = _remove_marked_section(existing).strip()
+        identity = (
+            f"I am {assistant_name}, your fun personal AI assistant inspired by Muffs, "
+            "the user's cat."
+        )
+        if not text:
+            return f"""# Soul
+
+{identity}
+
+## Core Principles
+
+- Keep responses short unless depth is asked for.
+- Be warm, practical, direct, and a little playful without being long-winded.
+- Help the user plan their day, remember commitments, answer questions, research useful information, and connect tools when asked.
+- When the user asks to connect Gmail, Calendar, Notion, GitHub, or another app, use Composio connection tools to generate an auth link.
+"""
+
+        text = re.sub(
+            r"(?m)^I am nanobot(?: 🐈)?, a personal AI assistant\.$",
+            identity,
+            text,
+            count=1,
+        )
+        text = re.sub(
+            r"(?m)^I am nanobot(?: 🐈)?\.$",
+            identity,
+            text,
+            count=1,
+        )
+
+        head = text[:1200].lower()
+        if assistant_name.lower() not in head:
+            if text.startswith("# Soul"):
+                parts = text.split("\n", 1)
+                text = f"{parts[0]}\n\n{identity}\n"
+                if len(parts) > 1 and parts[1].strip():
+                    text += "\n" + parts[1].lstrip()
+            else:
+                text = f"# Soul\n\n{identity}\n\n{text}"
+
+        if "Composio connection tools" not in text:
+            marker = "## Execution Rules"
+            addition = (
+                "- When the user asks to connect Gmail, Calendar, Notion, GitHub, "
+                "or another app, use Composio connection tools to generate an auth link."
+            )
+            if marker in text:
+                before, after = text.split(marker, 1)
+                section, *rest = after.split("\n## ", 1)
+                section = section.rstrip()
+                if addition not in section:
+                    section = f"{section}\n{addition}"
+                text = f"{before}{marker}{section}"
+                if rest:
+                    text += "\n## " + rest[0].lstrip()
+            else:
+                text = f"{text.rstrip()}\n\n## Tool Connections\n\n{addition}"
+
+        return text.rstrip() + "\n"
 
     def _write_user(self, state: dict[str, Any]) -> None:
         topics = state.get("digest_topics") or "not configured"

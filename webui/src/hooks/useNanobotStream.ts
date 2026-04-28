@@ -17,6 +17,17 @@ interface StreamBuffer {
   parts: string[];
 }
 
+interface CompletedStream {
+  /** ID of the assistant message that was finalized by ``stream_end``. */
+  messageId: string;
+  /** Final text assembled from streaming deltas. */
+  content: string;
+  /** Wall-clock completion time, used to avoid suppressing later repeats. */
+  endedAt: number;
+}
+
+const STREAM_FINAL_ECHO_WINDOW_MS = 5_000;
+
 /**
  * Subscribe to a chat by ID. Returns the in-memory message list for the chat,
  * a streaming flag, and a ``send`` function. Initial history must be seeded
@@ -54,6 +65,7 @@ export function useNanobotStream(
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<StreamError | null>(null);
   const buffer = useRef<StreamBuffer | null>(null);
+  const completedStream = useRef<CompletedStream | null>(null);
 
   useEffect(() => {
     return client.onError((err) => setStreamError(err));
@@ -70,6 +82,7 @@ export function useNanobotStream(
     setIsStreaming(false);
     setStreamError(null);
     buffer.current = null;
+    completedStream.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId]);
 
@@ -80,6 +93,7 @@ export function useNanobotStream(
       if (ev.event === "delta") {
         const id = buffer.current?.messageId ?? crypto.randomUUID();
         if (!buffer.current) {
+          completedStream.current = null;
           buffer.current = { messageId: id, parts: [] };
           setMessages((prev) => [
             ...prev,
@@ -108,7 +122,13 @@ export function useNanobotStream(
           return;
         }
         const finalId = buffer.current.messageId;
+        const finalContent = buffer.current.parts.join("");
         buffer.current = null;
+        completedStream.current = {
+          messageId: finalId,
+          content: finalContent,
+          endedAt: Date.now(),
+        };
         setIsStreaming(false);
         setMessages((prev) =>
           prev.map((m) =>
@@ -154,12 +174,33 @@ export function useNanobotStream(
           : ev.media?.map((url) => toMediaAttachment({ url }));
 
         // A complete (non-streamed) assistant message. If a stream was in
-        // flight, drop the placeholder so we don't render the text twice.
+        // flight, drop the placeholder so we don't render the text twice. Some
+        // backends emit the complete message after ``stream_end``; reconcile
+        // that echo with the just-finalized streamed row instead of appending.
         const activeId = buffer.current?.messageId;
+        const finalEcho = completedStream.current;
+        const isRecentFinalEcho =
+          !activeId &&
+          finalEcho &&
+          finalEcho.content === ev.text &&
+          Date.now() - finalEcho.endedAt <= STREAM_FINAL_ECHO_WINDOW_MS;
         buffer.current = null;
+        completedStream.current = null;
         setIsStreaming(false);
         setMessages((prev) => {
           const filtered = activeId ? prev.filter((m) => m.id !== activeId) : prev;
+          if (isRecentFinalEcho) {
+            return filtered.map((m) =>
+              m.id === finalEcho.messageId
+                ? {
+                    ...m,
+                    content: ev.text,
+                    isStreaming: false,
+                    ...(media && media.length > 0 ? { media } : {}),
+                  }
+                : m,
+            );
+          }
           return [
             ...filtered,
             {
@@ -181,6 +222,7 @@ export function useNanobotStream(
     return () => {
       unsub();
       buffer.current = null;
+      completedStream.current = null;
     };
   }, [chatId, client]);
 
@@ -203,6 +245,7 @@ export function useNanobotStream(
           ...(previews ? { images: previews } : {}),
         },
       ]);
+      completedStream.current = null;
       const wireMedia = hasImages ? images!.map((i) => i.media) : undefined;
       client.sendMessage(chatId, content, wireMedia);
     },

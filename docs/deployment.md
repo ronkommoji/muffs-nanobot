@@ -93,6 +93,73 @@ If you edit the `.service` file itself, run `systemctl --user daemon-reload` bef
 > loginctl enable-linger $USER
 > ```
 
+### Updating a source checkout on a systemd VPS
+
+If your VPS runs nanobot from a git checkout, use the helper script from the
+repo root:
+
+```bash
+cd /root/nanobot
+./scripts/upgrade-muffs-systemd.sh
+```
+
+The script:
+
+- refuses to run when there are local uncommitted changes
+- fetches `origin` and pulls `main` with `--ff-only`, so it stops instead of
+  creating merge conflicts
+- rebuilds the WebUI bundle into `nanobot/web/dist`
+- installs the repo into a Python virtual environment
+- restarts the systemd service
+- prints service status and recent logs
+
+If the service name is different, pass it with `SERVICE_NAME`:
+
+```bash
+SERVICE_NAME=nanobot-gateway ./scripts/upgrade-muffs-systemd.sh
+```
+
+If systemd already uses an existing virtual environment, pass that path so the
+script installs into the same environment:
+
+```bash
+VENV_DIR=/path/to/your/venv ./scripts/upgrade-muffs-systemd.sh
+```
+
+For example, if `systemctl cat nanobot` shows:
+
+```ini
+ExecStart=/root/nanobot-venv/bin/nanobot gateway
+```
+
+run:
+
+```bash
+VENV_DIR=/root/nanobot-venv ./scripts/upgrade-muffs-systemd.sh
+```
+
+The systemd service should point at the virtualenv binary that the script
+updates:
+
+```ini
+[Service]
+WorkingDirectory=/root/nanobot
+ExecStart=/root/nanobot/.venv/bin/nanobot gateway
+```
+
+If you use a different venv, replace `/root/nanobot/.venv` with that venv path.
+
+WebUI changes require a production build before they appear in the browser. The
+script runs the equivalent of:
+
+```bash
+cd /root/nanobot/webui
+npm ci
+npm run build
+```
+
+After deployment, hard-refresh the browser if the old dashboard still appears.
+
 ## macOS LaunchAgent
 
 Use a LaunchAgent when you want `nanobot gateway` to stay online after you log in, without keeping a terminal open.

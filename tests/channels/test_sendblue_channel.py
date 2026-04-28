@@ -291,7 +291,9 @@ async def test_onboarding_no_digest_persists_profile_files(tmp_path):
     assert state["assistant_name"] == "Muffs"
     assert state["digest_enabled"] is False
     assert "User name: Ron" in (tmp_path / "USER.md").read_text(encoding="utf-8")
-    assert "Assistant display name: Muffs" in (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+    soul = (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+    assert "I am Muffs, your fun personal AI assistant" in soul
+    assert "muffs-onboarding" not in soul
     assert "Morning digest is disabled" in (tmp_path / "memory" / "MEMORY.md").read_text(encoding="utf-8")
     assert "By the way" in ch._client.posts[-1]["json"]["content"]
 
@@ -308,6 +310,29 @@ async def test_onboarding_goes_from_name_to_capabilities(tmp_path):
     assert state["step"] == "offer_digest"
     assert state["assistant_name"] == "Muffs"
     assert "I'm Muffs, your fun personal AI assistant" in ch._client.posts[-1]["json"]["content"]
+
+
+def test_onboarding_soul_update_rewrites_default_identity_without_append(tmp_path):
+    runtime, _ = _onboarding_runtime(tmp_path)
+    onboarding = _SendblueOnboarding(runtime)
+    original = """# Soul
+
+I am nanobot 🐈, a personal AI assistant.
+
+## Core Principles
+
+- Solve by doing, not by describing what I would do.
+"""
+
+    rendered = onboarding._render_soul(
+        original + "\n<!-- muffs-onboarding:start -->\nold block\n<!-- muffs-onboarding:end -->\n",
+        "Muffs",
+    )
+
+    assert "I am Muffs, your fun personal AI assistant" in rendered
+    assert "I am nanobot" not in rendered
+    assert "muffs-onboarding" not in rendered
+    assert rendered.index("I am Muffs") < rendered.index("## Core Principles")
 
 
 @pytest.mark.asyncio
@@ -370,6 +395,6 @@ async def test_onboarding_two_profiles_are_separate(tmp_path):
         await onboard_b.handle(_inbound(text, phone="+15552222222"))
 
     assert "User name: Ron" in (tmp_path / "a" / "USER.md").read_text(encoding="utf-8")
-    assert "Assistant display name: Muffs" in (tmp_path / "a" / "SOUL.md").read_text(encoding="utf-8")
+    assert "I am Muffs, your fun personal AI assistant" in (tmp_path / "a" / "SOUL.md").read_text(encoding="utf-8")
     assert "User name: Rachel" in (tmp_path / "b" / "USER.md").read_text(encoding="utf-8")
-    assert "Assistant display name: Muffs" in (tmp_path / "b" / "SOUL.md").read_text(encoding="utf-8")
+    assert "I am Muffs, your fun personal AI assistant" in (tmp_path / "b" / "SOUL.md").read_text(encoding="utf-8")
