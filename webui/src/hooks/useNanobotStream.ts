@@ -181,7 +181,7 @@ export function useNanobotStream(
         const finalEcho = completedStream.current;
         const isRecentFinalEcho =
           !activeId &&
-          finalEcho &&
+          !!finalEcho &&
           finalEcho.content === ev.text &&
           Date.now() - finalEcho.endedAt <= STREAM_FINAL_ECHO_WINDOW_MS;
         buffer.current = null;
@@ -189,13 +189,15 @@ export function useNanobotStream(
         setIsStreaming(false);
         setMessages((prev) => {
           const filtered = activeId ? prev.filter((m) => m.id !== activeId) : prev;
-          if (isRecentFinalEcho) {
+          const content = ev.buttons?.length ? (ev.button_prompt ?? ev.text) : ev.text;
+          if (isRecentFinalEcho && finalEcho) {
             return filtered.map((m) =>
               m.id === finalEcho.messageId
                 ? {
                     ...m,
-                    content: ev.text,
+                    content,
                     isStreaming: false,
+                    ...(ev.buttons && ev.buttons.length > 0 ? { buttons: ev.buttons } : {}),
                     ...(media && media.length > 0 ? { media } : {}),
                   }
                 : m,
@@ -206,8 +208,9 @@ export function useNanobotStream(
             {
               id: crypto.randomUUID(),
               role: "assistant",
-              content: ev.text,
+              content,
               createdAt: Date.now(),
+              ...(ev.buttons && ev.buttons.length > 0 ? { buttons: ev.buttons } : {}),
               ...(media && media.length > 0 ? { media } : {}),
             },
           ];
