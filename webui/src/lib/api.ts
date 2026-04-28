@@ -106,3 +106,85 @@ export async function deleteSession(
   );
   return body.deleted;
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard API
+// ---------------------------------------------------------------------------
+
+export interface MemoryFiles {
+  soul: string;
+  user: string;
+  memory: string;
+}
+
+export async function fetchMemory(
+  token: string,
+  base: string = "",
+): Promise<MemoryFiles> {
+  const body = await request<{ files: MemoryFiles }>(`${base}/api/memory`, token);
+  return body.files;
+}
+
+export async function fetchSystemPrompt(
+  token: string,
+  base: string = "",
+): Promise<string> {
+  const body = await request<{ prompt: string }>(`${base}/api/system-prompt`, token);
+  return body.prompt;
+}
+
+export interface CronSchedule {
+  kind: "cron" | "every" | "at";
+  expr?: string | null;
+  everyMs?: number | null;
+  atMs?: number | null;
+  tz?: string | null;
+}
+
+export interface CronRunRecord {
+  runAtMs: number;
+  status: string;
+  durationMs: number;
+  error?: string | null;
+}
+
+export interface CronJob {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: CronSchedule;
+  payload: { message: string; deliver: boolean; channel?: string | null };
+  state: {
+    nextRunAtMs?: number | null;
+    lastRunAtMs?: number | null;
+    lastStatus?: string | null;
+    lastError?: string | null;
+    runHistory: CronRunRecord[];
+  };
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export async function fetchCronJobs(
+  token: string,
+  base: string = "",
+): Promise<CronJob[]> {
+  const body = await request<{ jobs: CronJob[] }>(`${base}/api/cron/jobs`, token);
+  return body.jobs;
+}
+
+export async function toggleCronJob(
+  token: string,
+  jobId: string,
+  base: string = "",
+): Promise<{ id: string; enabled: boolean }> {
+  return request(`${base}/api/cron/jobs/${encodeURIComponent(jobId)}/toggle`, token);
+}
+
+export async function runCronJob(
+  token: string,
+  jobId: string,
+  base: string = "",
+): Promise<{ id: string; status: string }> {
+  return request(`${base}/api/cron/jobs/${encodeURIComponent(jobId)}/run`, token);
+}
