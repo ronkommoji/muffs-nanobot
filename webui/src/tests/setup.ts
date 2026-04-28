@@ -16,6 +16,25 @@ if (!("randomUUID" in globalThis.crypto)) {
   });
 }
 
+if (typeof globalThis.localStorage?.setItem !== "function") {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    value: {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        store.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+    },
+    configurable: true,
+  });
+}
+
 beforeEach(async () => {
   await i18n.changeLanguage("en");
   document.documentElement.lang = "en";

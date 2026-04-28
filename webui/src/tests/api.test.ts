@@ -41,10 +41,11 @@ describe("webui API helpers", () => {
     });
 
     expect(fetch).toHaveBeenCalledWith(
-      "/api/settings/update?model=openrouter%2Ftest&provider=openrouter",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer tok" },
-      }),
+      "/api/settings/update?model=openrouter%2Ftest&provider=openrouter&token=tok",
+      expect.objectContaining({ credentials: "same-origin" }),
     );
+    const init = (fetch as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0][1] as RequestInit;
+    expect(init.headers).toBeUndefined();
   });
 });
